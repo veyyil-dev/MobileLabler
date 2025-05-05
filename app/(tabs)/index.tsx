@@ -294,19 +294,22 @@ export default function CameraExample() {
         }
       }
   
-      // 2. Create sanitized label for folder name
-      const sanitizedLabel = label.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      // 2. Use exact label as folder name (for user interface)
+      const folderName = label.trim();
+      
+      // Still need a sanitized version for file system operations
+      const sanitizedLabel = folderName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
       
       // 3. Save directly to media library first to ensure it works on all Android versions
       const asset = await MediaLibrary.createAssetAsync(photo.uri);
       
-      // 4. Create album with the label name
+      // 4. Create album with the exact folder name
       try {
-        const album = await MediaLibrary.getAlbumAsync(sanitizedLabel);
+        const album = await MediaLibrary.getAlbumAsync(folderName);
         
         if (album === null) {
           // Album doesn't exist, create it
-          await MediaLibrary.createAlbumAsync(sanitizedLabel, asset, false);
+          await MediaLibrary.createAlbumAsync(folderName, asset, false);
         } else {
           // Album exists, add to it
           await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
@@ -316,16 +319,10 @@ export default function CameraExample() {
         const timestamp = new Date().getTime();
         const fileName = `image_${timestamp}.jpg`;
         
-        // Create directory path
-        const directory = `${FileSystem.documentDirectory}LabeledPhotos/${sanitizedLabel}/`;
+        // Create directory path with the exact folder name
+        const directory = `${FileSystem.documentDirectory}${folderName}/`;
         
-        // Create parent directory if it doesn't exist
-        const parentDirInfo = await FileSystem.getInfoAsync(`${FileSystem.documentDirectory}LabeledPhotos/`);
-        if (!parentDirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}LabeledPhotos/`, { intermediates: true });
-        }
-        
-        // Create label-specific directory
+        // Create folder if it doesn't exist
         const dirInfo = await FileSystem.getInfoAsync(directory);
         if (!dirInfo.exists) {
           await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
@@ -338,10 +335,10 @@ export default function CameraExample() {
           to: fileUri,
         });
         
-        // 6. Show success message
+        // 6. Show success message with the exact folder name
         Alert.alert(
           'Success', 
-          `Photo saved to "${sanitizedLabel}" album`,
+          `Photo saved to "${folderName}" folder`,
           [{ text: 'OK' }]
         );
       } catch (albumError) {
