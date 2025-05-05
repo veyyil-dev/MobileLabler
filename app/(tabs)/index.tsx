@@ -261,69 +261,98 @@ export default function CameraExample() {
     setIsLoading(true);
   
     try {
-      // 1. Request permissions (Android only)
+      // 1. Request appropriate permissions based on Android version
       if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          {
-            title: 'Storage Permission',
-            message: 'App needs access to storage to save photos',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
-          }
-        );
+        // Check Android API level
+        const { status: mediaLibraryStatus } = await MediaLibrary.requestPermissionsAsync();
+        if (mediaLibraryStatus !== 'granted') {
+          throw new Error('Media Library permission denied');
+        }
         
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          throw new Error('Storage permission denied');
+        // For older Android versions, also request storage permissions
+        if (Platform.Version < 33) {
+          const storageStatus = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+            {
+              title: 'Storage Permission',
+              message: 'App needs access to storage to save photos',
+              buttonNeutral: 'Ask Me Later',
+              buttonNegative: 'Cancel',
+              buttonPositive: 'OK',
+            }
+          );
+          
+          if (storageStatus !== PermissionsAndroid.RESULTS.GRANTED) {
+            throw new Error('Storage permission denied');
+          }
         }
-      }
-  
-      // 2. Create folder named after the label
-      const sanitizedLabel = label.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const directory = `${FileSystem.documentDirectory}LabeledPhotos/${sanitizedLabel}/`;
-      
-      // Create parent directory if it doesn't exist
-      const parentDirInfo = await FileSystem.getInfoAsync(`${FileSystem.documentDirectory}LabeledPhotos/`);
-      if (!parentDirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}LabeledPhotos/`, { intermediates: true });
-      }
-      
-      // Create label-specific directory
-      const dirInfo = await FileSystem.getInfoAsync(directory);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-      }
-  
-      // 3. Generate filename and path
-      const timestamp = new Date().getTime();
-      const fileName = `image_${timestamp}.jpg`; // or `${sanitizedLabel}_${timestamp}.jpg`
-      const fileUri = `${directory}${fileName}`;
-  
-      // 4. Copy the photo to the new location
-      await FileSystem.copyAsync({
-        from: photo.uri,
-        to: fileUri,
-      });
-  
-      // 5. (Optional) Save to device's gallery
-      try {
+      } else {
+        // iOS permissions
         const { status } = await MediaLibrary.requestPermissionsAsync();
-        if (status === 'granted') {
-          const asset = await MediaLibrary.createAssetAsync(fileUri);
-          await MediaLibrary.createAlbumAsync(sanitizedLabel, asset, false);
+        if (status !== 'granted') {
+          throw new Error('Media Library permission denied');
         }
-      } catch (galleryError) {
-        console.log('Saved to app storage but not gallery:', galleryError);
       }
   
-      // 6. Show success message
-      Alert.alert(
-        'Success', 
-        `Photo saved in "${sanitizedLabel}" folder as "${fileName}"`,
-        [{ text: 'OK' }]
-      );
-  
+      // 2. Create sanitized label for folder name
+      const sanitizedLabel = label.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      
+      // 3. Save directly to media library first to ensure it works on all Android versions
+      const asset = await MediaLibrary.createAssetAsync(photo.uri);
+      
+      // 4. Create album with the label name
+      try {
+        const album = await MediaLibrary.getAlbumAsync(sanitizedLabel);
+        
+        if (album === null) {
+          // Album doesn't exist, create it
+          await MediaLibrary.createAlbumAsync(sanitizedLabel, asset, false);
+        } else {
+          // Album exists, add to it
+          await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+        }
+        
+        // 5. Also save to app's document directory for app access
+        const timestamp = new Date().getTime();
+        const fileName = `image_${timestamp}.jpg`;
+        
+        // Create directory path
+        const directory = `${FileSystem.documentDirectory}LabeledPhotos/${sanitizedLabel}/`;
+        
+        // Create parent directory if it doesn't exist
+        const parentDirInfo = await FileSystem.getInfoAsync(`${FileSystem.documentDirectory}LabeledPhotos/`);
+        if (!parentDirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}LabeledPhotos/`, { intermediates: true });
+        }
+        
+        // Create label-specific directory
+        const dirInfo = await FileSystem.getInfoAsync(directory);
+        if (!dirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+        }
+        
+        // Save to app directory
+        const fileUri = `${directory}${fileName}`;
+        await FileSystem.copyAsync({
+          from: photo.uri,
+          to: fileUri,
+        });
+        
+        // 6. Show success message
+        Alert.alert(
+          'Success', 
+          `Photo saved to "${sanitizedLabel}" album`,
+          [{ text: 'OK' }]
+        );
+      } catch (albumError) {
+        console.error('Album creation error:', albumError);
+        // If album creation fails, at least we still saved the image to media library
+        Alert.alert(
+          'Partial Success', 
+          'Photo saved to gallery but album creation failed',
+          [{ text: 'OK' }]
+        );
+      }
     } catch (error) {
       console.error('Error saving photo:', error);
       Alert.alert(
