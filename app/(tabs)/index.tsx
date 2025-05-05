@@ -1,6 +1,7 @@
 // import CameraRoll from '@react-native-community/cameraroll';
 import { BlurView } from 'expo-blur';
 import * as FileSystem from 'expo-file-system';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
@@ -112,99 +113,8 @@ export default function CameraExample() {
     setupApp();
   }, [isMounted]);
 
-  // useEffect(() => {
-  //   // Initialize Google Sign-In
-  //   GoogleSignin.configure({
-  //     // Client ID from user's credentials
-  //     webClientId: '1040205303673-hpk91ep7qm96u46tuiqfjmet7f00m2v3.apps.googleusercontent.com',
-  //     offlineAccess: true,
-  //     forceCodeForRefreshToken: true,
-  //     scopes: ['https://www.googleapis.com/auth/drive.file'],
-  //   });
-
-  //   // Check if user is already signed in
-  //   checkIsSignedIn();
-  // }, []);
-
-  // const checkIsSignedIn = async () => {
-  //   try {
-  //     // Use as any to work around TypeScript definition issues
-  //     const googleSignin = GoogleSignin as any;
-  //     const isSignedIn = await googleSignin.isSignedIn();
-  //     if (isSignedIn) {
-  //       getCurrentUserInfo();
-  //     }
-  //   } catch (error: any) {
-  //     console.error('Failed to check if user is signed in:', error);
-  //   }
-  // };
-
-  // const getCurrentUserInfo = async () => {
-  //   try {
-  //     const userInfo = await GoogleSignin.signInSilently();
-  //     setUserInfo(userInfo);
-  //   } catch (error: any) {
-  //     if (error.code === statusCodes.SIGN_IN_REQUIRED) {
-  //       // User hasn't signed in yet
-  //       setUserInfo(null);
-  //     } else {
-  //       console.error('Failed to get user info:', error);
-  //     }
-  //   }
-  // };
-
-  // const signIn = async () => {
-  //   try {
-  //     setIsSigninInProgress(true);
-  //     await GoogleSignin.hasPlayServices();
-  //     const userInfo = await GoogleSignin.signIn();
-  //     setUserInfo(userInfo);
-  //     setIsSigninInProgress(false);
-  //   } catch (error: any) {
-  //     setIsSigninInProgress(false);
-  //     if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-  //       // User cancelled the sign-in flow
-  //     } else if (error.code === statusCodes.IN_PROGRESS) {
-  //       // Sign-in already in progress
-  //     } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-  //       Alert.alert('Error', 'Play services not available');
-  //     } else {
-  //       Alert.alert('Error', 'Failed to sign in: ' + error.message);
-  //     }
-  //   }
-  // };
-
-  // const signOut = async () => {
-  //   try {
-  //     await GoogleSignin.signOut();
-  //     setUserInfo(null);
-  //   } catch (error: any) {
-  //     console.error('Failed to sign out:', error);
-  //   }
-  // };
-
-  const requestStoragePermission = async () => {
-    // Web platform doesn't need storage permissions in the same way
-    if (Platform.OS === 'web') {
-      return true;
-    }
-    
-    // For Android, request permissions
-    if (Platform.OS === 'android' && PermissionsAndroid) {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } catch (err) {
-        console.warn(err);
-        return false;
-      }
-    }
-    
-    // For iOS, no explicit permission needed
-    return true;
-  };
+ 
+ 
 
   const loadGalleryAssets = async (afterCursor?: string) => {
     try {
@@ -248,10 +158,7 @@ export default function CameraExample() {
     }
   };
 
-  const openGallery = async () => {
-    await loadGalleryAssets();
-    setGalleryVisible(true);
-  };
+
 
   const selectGalleryImage = (asset: MediaLibrary.Asset) => {
     setPhoto({ uri: asset.uri });
@@ -267,87 +174,79 @@ export default function CameraExample() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [1, 1],
         quality: 0.7,
       });
       
-      console.log('Image picker result:', result);
-      
       if (!result.canceled && result.assets && result.assets.length > 0) {
+        // If already edited with the built-in picker, we can skip the additional cropping
+        setPhoto({ uri: result.assets[0].uri });
+        
         // If no label is set, extract a name from the original file
         if (!label) {
-          // Get original filename from uri
           const uriParts = result.assets[0].uri.split('/');
           const fileName = uriParts[uriParts.length - 1];
-          // Remove extension
           const baseName = fileName.split('.')[0];
           setLabel(baseName);
           setFolderName(baseName);
         }
-        
-        setPhoto({ uri: result.assets[0].uri });
       }
     } catch (error) {
-      console.error('Error picking image:', error);
-      setCameraError('Failed to pick image');
-      Alert.alert('Error', 'Failed to pick image from library');
+      console.error('Error picking or cropping image:', error);
+      setCameraError('Failed to pick or crop image');
+      Alert.alert('Error', 'Failed to pick or crop image from library');
     }
   };
   
+  const cropImage = async (imageUri: string) => {
+    try {
+      // We're not defining a specific crop area to enable free cropping
+      return await ImageManipulator.manipulateAsync(
+        imageUri,
+        [], // Empty actions array to skip automatic cropping
+        {
+          compress: 0.8,
+          format: ImageManipulator.SaveFormat.JPEG,
+        }
+      );
+    } catch (error) {
+      console.error('Image cropper error:', error);
+      // Fallback to original image if cropping fails
+      return { uri: imageUri };
+    }
+  };
+  
+  // Update your takePictureWithCamera function:
   const takePictureWithCamera = async () => {
-    // Reset any previous errors
     setCameraError(null);
     
     try {
-      // Request camera permission first
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
         setCameraError('Camera permission denied');
-        Alert.alert(
-          'Permission Denied', 
-          'Camera permission is required. Please enable it in settings.',
-          [
-            {
-              text: 'Open Settings',
-              onPress: () => Linking.openSettings(),
-            },
-            {
-              text: 'Cancel',
-              style: 'cancel',
-            },
-          ]
-        );
+        Alert.alert('Permission Denied', 'Camera access required');
         return;
       }
       
-      // Launch camera
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [1, 1],
         quality: 0.7,
       });
-      
-      console.log('Camera result:', result);
-      
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        // If no label is set, use a timestamp as a default name
-        if (!label) {
-          const timestamp = new Date().toLocaleString().replace(/[\/\s:,]/g, '_');
-          const defaultName = `Photo_${timestamp}`;
-          setLabel(defaultName);
-          setFolderName(defaultName);
-        }
-        
+  
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        // No need for additional cropping as the built-in editor is used
         setPhoto({ uri: result.assets[0].uri });
+        
+        if (!label) {
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          setLabel(`Photo_${timestamp}`);
+        }
       }
     } catch (error) {
-      console.error('Error taking picture:', error);
-      setCameraError('Failed to take picture');
-      Alert.alert('Error', 'Failed to take picture with camera');
+      console.error('Camera error:', error);
+      setCameraError('Failed to capture image');
     }
   };
-
   const saveLabeledPhoto = async () => {
     if (!photo) {
       Alert.alert('Error', 'No photo to save');
@@ -644,14 +543,7 @@ export default function CameraExample() {
               placeholderTextColor="#999"
             />
 
-            {/* <Text style={styles.inputLabel}>Save to Folder</Text>
-            <TextInput
-              placeholder="Folder name for saving photos"
-              value={folderName}
-              onChangeText={setFolderName}
-              style={styles.input}
-              placeholderTextColor="#999"
-            /> */}
+           
           </View>
 
         
@@ -666,11 +558,7 @@ export default function CameraExample() {
                     style={styles.image}
                   
                   >
-                    {/* {label && (
-                      <View style={styles.labelContainer}>
-                        <Text style={styles.label}>{label}</Text>
-                      </View>
-                    )} */}
+                  
                   </ImageBackground>
                 </View>
                 {/* <Text style={styles.fileNameText}>{label}.jpg</Text> */}

@@ -3,7 +3,6 @@ import React from 'react';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Ionicons } from '@expo/vector-icons';
-import CameraExample from './index';
 export default function TabLayout() {
   const colorScheme = useColorScheme();
 
@@ -11,7 +10,6 @@ export default function TabLayout() {
     <Tabs screenOptions={{ headerShown: false }}>
       <Tabs.Screen
         name="index"
-        
         options={{
           title: 'Camera',
           tabBarIcon: ({ color }) => <Ionicons name="camera" size={24} color={color} />,
