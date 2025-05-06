@@ -26,6 +26,7 @@ import {
   View,
 } from 'react-native';
 import ViewShot from 'react-native-view-shot';
+import * as Device from 'expo-device'; 
 
 // Conditionally import PermissionsAndroid only for non-web platforms
 const PermissionsAndroid = Platform.OS !== 'web' ? require('react-native').PermissionsAndroid : null;
@@ -263,13 +264,11 @@ export default function CameraExample() {
     try {
       // 1. Request appropriate permissions based on Android version
       if (Platform.OS === 'android') {
-        // Check Android API level
         const { status: mediaLibraryStatus } = await MediaLibrary.requestPermissionsAsync();
         if (mediaLibraryStatus !== 'granted') {
           throw new Error('Media Library permission denied');
         }
-        
-        // For older Android versions, also request storage permissions
+  
         if (Platform.Version < 33) {
           const storageStatus = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
@@ -281,71 +280,81 @@ export default function CameraExample() {
               buttonPositive: 'OK',
             }
           );
-          
+  
           if (storageStatus !== PermissionsAndroid.RESULTS.GRANTED) {
             throw new Error('Storage permission denied');
           }
         }
       } else {
-        // iOS permissions
         const { status } = await MediaLibrary.requestPermissionsAsync();
         if (status !== 'granted') {
           throw new Error('Media Library permission denied');
         }
       }
   
-      // 2. Use exact label as folder name (for user interface)
+      // 2. Use exact label as folder name for media library and app folder
       const folderName = label.trim();
-      
-      // Still need a sanitized version for file system operations
-      const sanitizedLabel = folderName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      
-      // 3. Save directly to media library first to ensure it works on all Android versions
-      const asset = await MediaLibrary.createAssetAsync(photo.uri);
-      
-      // 4. Create album with the exact folder name
+      // const sanitizedLabel = folderName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  
+      // 3. Save directly to media library first
+ // Step 1: Generate renamed file in cache first
+const now = new Date();
+const monthName = now.toLocaleString('default', { month: 'short' }); // e.g., "May"
+const year = now.getFullYear();
+const timestamp = `${monthName.toLowerCase()}_${year}`; // e.g., "may_2025"
+
+console.log(timestamp);
+
+const deviceName = Device.modelName
+  ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+  : 'unknown_device';
+
+const fileName = `${deviceName}_${timestamp}.jpg`;
+
+const tempUri = `${FileSystem.cacheDirectory}${fileName}`;
+await FileSystem.copyAsync({
+  from: photo.uri,
+  to: tempUri,
+});
+
+// Step 2: Save renamed image to media library
+const asset = await MediaLibrary.createAssetAsync(tempUri);
+
+  
       try {
         const album = await MediaLibrary.getAlbumAsync(folderName);
-        
+  
         if (album === null) {
-          // Album doesn't exist, create it
           await MediaLibrary.createAlbumAsync(folderName, asset, false);
         } else {
-          // Album exists, add to it
           await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
         }
-        
-        // 5. Also save to app's document directory for app access
+  
+        // 4. Save to app's internal directory with device name and timestamp
         const timestamp = new Date().getTime();
-        const fileName = `image_${timestamp}.jpg`;
-        
-        // Create directory path with the exact folder name
+        const deviceName = Device.modelName
+          ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+          : 'unknown_device';
+        const fileName = `${deviceName}_${timestamp}.jpg`;
+  
         const directory = `${FileSystem.documentDirectory}${folderName}/`;
-        
-        // Create folder if it doesn't exist
+  
         const dirInfo = await FileSystem.getInfoAsync(directory);
         if (!dirInfo.exists) {
           await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
         }
-        
-        // Save to app directory
+  
         const fileUri = `${directory}${fileName}`;
         await FileSystem.copyAsync({
           from: photo.uri,
           to: fileUri,
         });
-        
-        // 6. Show success message with the exact folder name
-        Alert.alert(
-          'Success', 
-          `Photo saved to "${folderName}" folder`,
-          [{ text: 'OK' }]
-        );
+  
+        Alert.alert('Success', `Photo saved to "${folderName}" folder`, [{ text: 'OK' }]);
       } catch (albumError) {
         console.error('Album creation error:', albumError);
-        // If album creation fails, at least we still saved the image to media library
         Alert.alert(
-          'Partial Success', 
+          'Partial Success',
           'Photo saved to gallery but album creation failed',
           [{ text: 'OK' }]
         );
@@ -353,7 +362,7 @@ export default function CameraExample() {
     } catch (error) {
       console.error('Error saving photo:', error);
       Alert.alert(
-        'Error', 
+        'Error',
         `Failed to save photo: ${error instanceof Error ? error.message : 'Unknown error'}`,
         [{ text: 'OK' }]
       );
