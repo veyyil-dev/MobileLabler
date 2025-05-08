@@ -4,7 +4,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { useEffect, useState } from 'react';
-import { Alert, Platform, Share } from 'react-native';
+import { Alert, Platform, Share, ToastAndroid } from 'react-native';
 import * as ScopedStorage from 'react-native-scoped-storage';
 // @ts-ignore - Importing react-native-file-access
 const FileAccess = require('react-native-file-access');
@@ -69,7 +69,22 @@ async function getAndroidDir(directoryId: string): Promise<DirectoryInfo | null>
     // Verify we still have permission
     try {
       const persistedUris = await ScopedStorage.getPersistedUriPermissions();
-      if (persistedUris.indexOf(dir.uri) !== -1) return dir;
+      console.log('Persisted URIs:', persistedUris);
+      
+      if (persistedUris.indexOf(dir.uri) !== -1) {
+        // Make sure we can actually access this directory
+        try {
+          // Check if we can list the directory contents
+          const contents = await ScopedStorage.listFiles(dir.uri);
+          console.log(`Verified access to ${dir.name} - found ${contents.length} files/folders`);
+          return dir;
+        } catch (accessError) {
+          console.log(`Access check for ${dir.uri} failed:`, accessError);
+          // We don't have actual access, request permission again
+        }
+      } else {
+        console.log(`Permission for ${dir.uri} not found in persisted URIs`);
+      }
     } catch (error) {
       console.log('Error checking permissions:', error);
     }
@@ -268,153 +283,346 @@ export const useFileSystem = () => {
     }
 
     try {
+      console.log(`=== SAVING TO ROOT FOLDER ===`);
+      console.log(`Root folder URI: ${rootFolder}`);
+      console.log(`Root folder name: ${rootFolderName || 'Unknown'}`);
+      console.log(`Label (subfolder name): ${label}`);
+      
+      // Show toast on Android to indicate we're working
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Saving photo...', ToastAndroid.SHORT);
+      }
+      
       // Create a better filename with device and date
       const now = new Date();
       const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
       const deviceName = Device.modelName
         ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
         : 'unknown_device';
-      const fileName = `${deviceName}_${dateStr}.jpg`;
+      
+      // IMPORTANT: Exact filename format that should be used
+      const exactFileName = `${deviceName}_${dateStr}.jpg`;
+      console.log(`Using exact filename: ${exactFileName}`);
       
       // Create folder name from label (or default if empty)
       const folderName = label.trim() || 'Untitled';
+      console.log(`Using folder name: ${folderName}`);
 
-      // First, create a temporary copy of the photo for processing
-      const tempUri = `${FileSystem.cacheDirectory}${fileName}`;
-      await FileSystem.copyAsync({
-        from: photo.uri,
-        to: tempUri
-      });
+      // First, create a temporary copy of the photo with proper MIME type
+      const tempUri = `${FileSystem.cacheDirectory}${exactFileName}`;
+      console.log(`Temp file path: ${tempUri}`);
       
-      console.log(`Created temp file at: ${tempUri}`);
-      
+      // Attempt to create a proper image file
       try {
-        if (rootFolder.startsWith('content://')) {
-          // For content:// URIs, we need to use ScopedStorage
-          console.log(`Using content URI approach for ${rootFolder}`);
-          
-          // Read the temp file as base64
+        // First, ensure image is in JPEG format with proper extension
+        const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+        
+        // Create a proper JPEG with no compression/manipulation
+        const manipResult = await manipulateAsync(
+          photo.uri,
+          [], // no manipulations
+          { format: SaveFormat.JPEG }
+        );
+        
+        console.log(`Created manipulated image: ${manipResult.uri}`);
+        
+        // Save directly to the temp path
+        await FileSystem.copyAsync({
+          from: manipResult.uri,
+          to: tempUri
+        });
+        
+        console.log(`Copied to temporary location: ${tempUri}`);
+      } catch (imageError) {
+        console.log(`Image manipulation failed: ${imageError}`);
+        // Direct copy as fallback
+        await FileSystem.copyAsync({
+          from: photo.uri,
+          to: tempUri
+        });
+        console.log(`Used direct copy instead: ${tempUri}`);
+      }
+      
+      // Now that we have a properly formatted image, let's save it to the root folder
+      if (rootFolder.startsWith('content://')) {
+        // CONTENT URI APPROACH - Android Scoped Storage
+        console.log(`Using content URI approach`);
+        
+        try {
+          // Read the file as base64
           const fileData = await FileSystem.readAsStringAsync(tempUri, { 
             encoding: FileSystem.EncodingType.Base64 
           });
+          console.log(`Read temp file as base64 data - ${fileData.length} bytes`);
           
-          // For Android content:// URIs, try two approaches
-          
-          // Approach 1: Try to create subfolder and write to it
+          // Verify permissions and try to get a fresh permission if needed
           try {
-            console.log(`Trying to create subfolder: ${folderName}`);
-            // This may fail on some Android versions
-            const documentTree = rootFolder; // Use rootFolder directly instead
+            // First, check if we have permission
+            const persistedUris = await ScopedStorage.getPersistedUriPermissions();
+            let currentRootUri = rootFolder;
             
-            if (documentTree) {
-              console.log(`Using document tree, creating subfolder`);
-              // Try to create/find the subfolder
-              const subfolder = await ScopedStorage.createDirectory(documentTree, folderName);
+            if (persistedUris.indexOf(rootFolder) === -1) {
+              console.log(`Permission for ${rootFolder} not found! Requesting new permission...`);
+              // Show tooltip for user
+              if (Platform.OS === 'android') {
+                ToastAndroid.show('Refreshing folder permissions...', ToastAndroid.SHORT);
+              }
               
-              if (subfolder && subfolder.uri) {
-                console.log(`Created subfolder with URI: ${subfolder.uri}`);
-                // Write to subfolder
+              const newDir = await getAndroidDir(ROOT_FOLDER_ID);
+              if (newDir && newDir.uri) {
+                console.log(`Using newly requested folder: ${newDir.uri}`);
+                setRootFolder(newDir.uri);
+                setRootFolderName(newDir.name);
+                currentRootUri = newDir.uri;
+              } else {
+                throw new Error("Permission to write to this folder was revoked. Please select the folder again.");
+              }
+            } else {
+              console.log(`Permission verified for ${rootFolder}`);
+            }
+            
+            // ===== DIRECT DOCUMENT APPROACH =====
+            // Try to create a file directly using the DocumentFile API
+            console.log(`Trying to create file using DocumentFile API`);
+            
+            try {
+              // First check if we can access the root directory by listing files
+              try {
+                const fileList = await ScopedStorage.listFiles(currentRootUri);
+                console.log(`Can access directory, contains ${fileList.length} items`);
+              } catch (listError) {
+                console.log(`Cannot list files in ${currentRootUri}:`, listError);
+                throw new Error("Directory access failed. Please select a different folder.");
+              }
+              
+              // Attempt to create a file in the root directory first as a test
+              const testFile = await ScopedStorage.createFile(
+                currentRootUri,
+                "test.txt",
+                "text/plain"
+              );
+              
+              if (testFile && testFile.uri) {
+                console.log(`Test file created successfully at: ${testFile.uri}`);
+                
+                // Write some test data
                 await ScopedStorage.writeFile(
-                  subfolder.uri,
-                  fileName,
-                  'image/jpeg',
-                  fileData,
-                  'base64'
+                  testFile.uri,
+                  "This is a test file",
+                  "text/plain",
+                  "This is a test file",
+                  "utf8"
                 );
                 
-                Alert.alert('Success', `Photo saved to ${folderName}/${fileName}`, [{ text: 'OK' }]);
-                return;
+                // Clean up the test file
+                await ScopedStorage.deleteFile(testFile.uri);
+                console.log(`Test file deleted`);
               }
+              
+              // Now try to create a subfolder
+              let targetUri = currentRootUri;
+              let finalFilename = exactFileName;
+              
+              // Try to create and use a subfolder if possible
+              try {
+                const subfolder = await ScopedStorage.createDirectory(currentRootUri, folderName);
+                if (subfolder && subfolder.uri) {
+                  console.log(`Created subfolder: ${subfolder.uri}`);
+                  targetUri = subfolder.uri;
+                } else {
+                  console.log(`Could not create subfolder, using root folder`);
+                  // Use the folderName in the filename instead
+                  finalFilename = `${folderName}_${exactFileName}`;
+                }
+              } catch (folderError) {
+                console.log(`Error creating subfolder: ${folderError}`);
+                // Use the folderName in the filename instead
+                finalFilename = `${folderName}_${exactFileName}`;
+              }
+              
+              // Create the image file
+              const imageFile = await ScopedStorage.createFile(
+                targetUri,
+                finalFilename,
+                "image/jpeg"
+              );
+              
+              if (imageFile && imageFile.uri) {
+                console.log(`Image file created at: ${imageFile.uri}`);
+                
+                // Write the image data
+                await ScopedStorage.writeFile(
+                  imageFile.uri,
+                  finalFilename,
+                  "image/jpeg",
+                  fileData,
+                  "base64"
+                );
+                
+                console.log(`Image data written successfully`);
+                
+                // Show success message
+                if (targetUri !== currentRootUri) {
+                  Alert.alert('Success', `Photo saved to ${folderName}/${finalFilename}`, [{ text: 'OK' }]);
+                } else {
+                  Alert.alert('Success', `Photo saved as ${finalFilename}`, [{ text: 'OK' }]);
+                }
+                
+                return;
+              } else {
+                throw new Error("Failed to create image file");
+              }
+            } catch (documentError) {
+              console.error(`DocumentFile approach failed: ${documentError}`);
+              
+              // Fall back to simpler approaches
+              // Try direct file write with a simple filename
+              const simpleFile = `photo_${Math.floor(Math.random() * 10000)}.jpg`;
+              console.log(`Trying simple file approach with: ${simpleFile}`);
+              
+              await ScopedStorage.writeFile(
+                currentRootUri,
+                simpleFile,
+                'image/jpeg',
+                fileData,
+                'base64'
+              );
+              
+              console.log(`SAVED FILE with simple name`);
+              Alert.alert('Success', `Photo saved as ${simpleFile}`, [{ text: 'OK' }]);
+              return;
             }
-          } catch (subfolderError) {
-            console.log(`Subfolder approach failed: ${subfolderError}`);
+          } catch (permError) {
+            console.error(`Permission verification failed: ${permError}`);
+            throw permError;
           }
+        } catch (contentError) {
+          console.error(`ALL content URI approaches failed: ${contentError}`);
           
-          // Approach 2: Try direct filename with folder in path
+          // Fall back to Pictures directory
           try {
-            console.log(`Falling back to filename approach`);
-            // Try to write with folderName in the filename
-            const fullFileName = `${folderName}/${fileName}`;
-            await ScopedStorage.writeFile(
-              rootFolder,
-              fullFileName,  // Try with slash to indicate subfolder
-              'image/jpeg',
-              fileData,
-              'base64'
-            );
-            
-            Alert.alert('Success', `Photo saved to ${folderName}/${fileName}`, [{ text: 'OK' }]);
-            return;
-          } catch (pathError) {
-            console.log(`Path approach failed: ${pathError}`);
-            
-            // Last try: Just use underscore in filename
-            console.log(`Using underscore approach`);
-            const fallbackFileName = `${folderName}_${fileName}`;
-            await ScopedStorage.writeFile(
-              rootFolder,
-              fallbackFileName,
-              'image/jpeg',
-              fileData,
-              'base64'
-            );
-            
-            Alert.alert('Success', `Photo saved as ${fallbackFileName}`, [{ text: 'OK' }]);
-          }
-        } else {
-          // For file:// URIs, we can create folders more reliably
-          console.log(`Using file URI approach for ${rootFolder}`);
-          
-          try {
-            // Create subfolder path
-            const subfolderPath = `${rootFolder}/${folderName}`;
-            console.log(`Creating folder at ${subfolderPath}`);
-            
-            // Make directory using FileAccess (more reliable)
-            await FileAccess.mkdir(subfolderPath);
-            
-            // Copy the file to subfolder
-            const finalPath = `${subfolderPath}/${fileName}`;
-            console.log(`Copying file to ${finalPath}`);
-            await FileAccess.copyFile(tempUri, finalPath);
-            
-            // Try to add to media library
-            try {
-              await MediaLibrary.createAssetAsync(finalPath);
-            } catch (mediaError) {
-              // Not critical if this fails
-              console.log(`Media library registration failed: ${mediaError}`);
-            }
-            
-            Alert.alert('Success', `Photo saved to ${folderName}/${fileName}`, [{ text: 'OK' }]);
-          } catch (fileError) {
-            console.error(`File access error: ${fileError}`);
-            
-            // Fall back to Pictures directory
+            // Create folder in Pictures directory
             const picturesPath = `${FileAccess.Dirs.PictureDir}/${folderName}`;
-            try {
-              await FileAccess.mkdir(picturesPath);
-              const pictureFile = `${picturesPath}/${fileName}`;
-              await FileAccess.copyFile(tempUri, pictureFile);
-              
-              // Add to media library
-              await MediaLibrary.createAssetAsync(pictureFile);
-              
-              Alert.alert('Success', `Photo saved to Pictures/${folderName}/${fileName}`, [{ text: 'OK' }]);
-            } catch (picturesError) {
-              // Last resort: Save to gallery directly
-              await saveToGallery(photo, folderName);
-            }
+            console.log(`Falling back to Pictures directory: ${picturesPath}`);
+            
+            await FileAccess.mkdir(picturesPath);
+            const pictureFile = `${picturesPath}/${exactFileName}`;
+            await FileAccess.copyFile(tempUri, pictureFile);
+            
+            // Add to media library for visibility
+            await MediaLibrary.createAssetAsync(pictureFile);
+            
+            console.log(`Successfully saved to Pictures directory: ${pictureFile}`);
+            Alert.alert('Success', `Photo saved to Pictures/${folderName}/${exactFileName} (Root folder failed)`, [{ text: 'OK' }]);
+            return;
+          } catch (picturesError) {
+            console.error(`Pictures directory fallback failed: ${picturesError}`);
+            throw contentError; // Let the outer catch handle the original error
           }
         }
-      } catch (error) {
-        console.error(`Overall save error: ${error}`);
-        // If all fails, try gallery save
-        await saveToGallery(photo, folderName);
+      } else {
+        // FILE URI APPROACH - Direct File Access
+        console.log(`Using file URI approach`);
+        
+        try {
+          // Create subfolder path
+          const subfolderPath = `${rootFolder}/${folderName}`;
+          console.log(`Attempting to create folder at: ${subfolderPath}`);
+          
+          // Create folder
+          await FileAccess.mkdir(subfolderPath);
+          console.log(`Successfully created folder at: ${subfolderPath}`);
+          
+          // Save file to subfolder
+          const finalPath = `${subfolderPath}/${exactFileName}`;
+          console.log(`Saving file to: ${finalPath}`);
+          
+          await FileAccess.copyFile(tempUri, finalPath);
+          console.log(`Successfully copied file to: ${finalPath}`);
+          
+          // Try to add to media library for visibility
+          try {
+            const asset = await MediaLibrary.createAssetAsync(finalPath);
+            console.log(`Successfully added to media library: ${asset.uri}`);
+          } catch (mediaError) {
+            console.log(`Failed to add to media library: ${mediaError}`);
+            // Not critical
+          }
+          
+          Alert.alert('Success', `Photo saved to ${folderName}/${exactFileName}`, [{ text: 'OK' }]);
+        } catch (fileError) {
+          console.error(`File URI approach failed: ${fileError}`);
+          
+          // Fall back to Pictures directory
+          const picturesPath = `${FileAccess.Dirs.PictureDir}/${folderName}`;
+          try {
+            console.log(`Falling back to Pictures directory: ${picturesPath}`);
+            await FileAccess.mkdir(picturesPath);
+            const pictureFile = `${picturesPath}/${exactFileName}`;
+            await FileAccess.copyFile(tempUri, pictureFile);
+            
+            // Add to media library
+            await MediaLibrary.createAssetAsync(pictureFile);
+            
+            console.log(`Successfully saved to Pictures directory: ${pictureFile}`);
+            Alert.alert('Success', `Photo saved to Pictures/${folderName}/${exactFileName}`, [{ text: 'OK' }]);
+          } catch (picturesError) {
+            console.error(`Pictures directory fallback failed: ${picturesError}`);
+            // Last resort: Save to gallery directly
+            await saveToGallery(photo, folderName);
+          }
+        }
       }
     } catch (error) {
       console.error(`Critical error in saveToRootFolder: ${error}`);
-      Alert.alert('Error', 'Failed to save photo. Try saving to gallery instead.');
+      
+      // Provide more helpful error message to user
+      const errorMsg = error instanceof Error 
+        ? error.message 
+        : 'Could not save to selected folder';
+        
+      Alert.alert(
+        'Error Saving Photo', 
+        `${errorMsg}\n\nWould you like to try another location?`,
+        [
+          {
+            text: 'Try Gallery',
+            onPress: async () => {
+              try {
+                await saveToGallery(photo, label);
+              } catch (galleryError) {
+                console.error(`Even gallery save failed: ${galleryError}`);
+                Alert.alert('Error', 'Could not save photo anywhere. Please check app permissions.');
+              }
+            }
+          },
+          {
+            text: 'Select New Folder',
+            onPress: async () => {
+              await AsyncStorage.removeItem(ROOT_FOLDER_ID);
+              setRootFolder(null);
+              setRootFolderName(null);
+              
+              // Clear old permissions if possible
+              try {
+                await ScopedStorage.releasePersistableUriPermission(rootFolder);
+              } catch (e) {
+                // Ignore errors when trying to release
+              }
+              
+              // Request new directory
+              const dir = await getAndroidDir(ROOT_FOLDER_ID);
+              if (dir) {
+                // Try to save again
+                setTimeout(() => {
+                  saveToRootFolder(photo, label);
+                }, 500);
+              }
+            }
+          },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
     }
   };
 
@@ -433,6 +641,48 @@ export const useFileSystem = () => {
 
         // If we already have a root folder, offer to change or keep it
         if (rootFolder && rootFolderName) {
+          // Verify we still have permission to the current folder
+          let hasPermission = false;
+          try {
+            const persistedUris = await ScopedStorage.getPersistedUriPermissions();
+            hasPermission = persistedUris.indexOf(rootFolder) !== -1;
+            
+            // Try to list files as an additional permission check
+            if (hasPermission) {
+              await ScopedStorage.listFiles(rootFolder);
+            }
+          } catch (error) {
+            console.log('Permission verification error:', error);
+            hasPermission = false;
+          }
+          
+          // If we don't have permission, inform the user
+          if (!hasPermission) {
+            Alert.alert(
+              'Permission Issue',
+              'The previously selected folder is no longer accessible. Please select a new folder.',
+              [
+                {
+                  text: 'Select New Folder',
+                  onPress: async () => {
+                    const dir = await getAndroidDir(ROOT_FOLDER_ID);
+                    if (!dir) {
+                      Alert.alert('Error', 'Could not select folder');
+                      return;
+                    }
+                    setRootFolder(dir.uri);
+                    setRootFolderName(dir.name);
+                    Alert.alert(
+                      'Root Folder Updated',
+                      `All photos will be saved to: ${dir.name || 'selected folder'}`
+                    );
+                  }
+                }
+              ]
+            );
+            return;
+          }
+
           Alert.alert(
             'Root Folder',
             `Current folder: ${rootFolderName}\n\nWhat would you like to do?`,
