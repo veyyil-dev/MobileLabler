@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "my-app",
-    "slug": "my-app",
+    "slug": "manojkumarpro",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -51,8 +51,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "b839ca7b-e8d3-457e-99b3-5431cd521fcd"
+        "projectId": "60cf05d5-b388-4849-8088-2ad5c2e138da"
       }
-    }
+    },
+    "owner": "vmkmano13"
   }
 }
