@@ -453,7 +453,6 @@ export const useFileSystem = () => {
                 // Write the image data
                 await ScopedStorage.writeFile(
                   imageFile.uri,
-                  finalFilename,
                   "image/jpeg",
                   fileData,
                   "base64"
