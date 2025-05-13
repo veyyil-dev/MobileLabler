@@ -292,7 +292,7 @@ export const useFileSystem = () => {
     }
   };
 
-const saveToRootFolder = async (photo: { uri: string } | null, label: string) => {
+const saveToRootFolder = async (photo: { uri: string } | null, label: string, rootFolder: string) => {
   if (!photo || !rootFolder) {
     Alert.alert('Error', 'No photo or root folder set');
     return;
@@ -304,46 +304,41 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
     const deviceName = Device.modelName
       ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
       : 'unknown_device';
-    const exactFileName = `${deviceName}_${dateStr}.jpg`;
+
+    const fileName = `${deviceName}_${dateStr}.jpg`;
     const folderName = label.trim() || 'Untitled';
 
-    if (rootFolder.startsWith('content://')) {
-      // Scoped Storage binary blob approach for Android
-      const fileBlob = await fetch(photo.uri).then(res => res.blob());
+    // Create subfolder inside selected root
+    const subfolder = await ScopedStorage.createDirectory(rootFolder, folderName);
+    if (!subfolder?.uri) throw new Error('Failed to create subfolder');
 
-      const subfolder = await ScopedStorage.createDirectory(rootFolder, folderName);
-      if (!subfolder || !subfolder.uri) {
-        throw new Error('Failed to create subfolder');
-      }
+    // Create file inside subfolder
+    const imageFile = await ScopedStorage.createFile(
+      subfolder.uri,
+      fileName,
+      'image/jpeg'
+    );
+    if (!imageFile?.uri) throw new Error('Failed to create image file');
 
-      const imageFile = await ScopedStorage.createFile(
-        subfolder.uri,
-        exactFileName,
-        'image/jpeg'
-      );
+    // Read binary file as blob (not base64!)
+    const response = await fetch(photo.uri);
+    const blob = await response.blob();
 
-      if (imageFile && imageFile.uri) {
-        await ScopedStorage.writeFile(
-          imageFile.uri,
-          'image/jpeg',
-          await fileBlob.text(), // Convert Blob to Base64 string
-          'blob'
-        );
-        Alert.alert('Success', `Photo saved to ${folderName}/${exactFileName}`, [{ text: 'OK' }]);
-      }
-    } else {
-      // Non-scoped storage case
-      const subfolderPath = `${rootFolder}/${folderName}`;
-      await FileAccess.mkdir(subfolderPath);
-      const finalPath = `${subfolderPath}/${exactFileName}`;
-      await FileAccess.copyFile(photo.uri, finalPath);
-      Alert.alert('Success', `Photo saved to ${folderName}/${exactFileName}`, [{ text: 'OK' }]);
-    }
-  } catch (error) {
+    // Write binary data to file using 'blob' mode
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64data = reader.result?.toString().split(',')[1] || '';
+      await ScopedStorage.writeFile(imageFile.uri, 'image/jpeg', base64data, 'base64');
+    };
+    reader.readAsDataURL(blob);
+
+    Alert.alert('Success', `Photo saved to ${folderName}/${fileName}`);
+  } catch (error: any) {
     console.error('Error saving photo:', error);
-    Alert.alert('Error', 'Failed to save photo');
+    Alert.alert('Error', error.message || 'Failed to save photo');
   }
 };
+
 
 
 
@@ -574,7 +569,7 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
       if (rootFolder) {
         saveOptions.unshift({
           text: 'Root Folder',
-          onPress: async () => await saveToRootFolder(photo, label),
+          onPress: async () => await saveToRootFolder(photo, label, rootFolder!),
         });
       }
       
