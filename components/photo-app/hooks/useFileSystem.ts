@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Platform, Share } from 'react-native';
 import * as ScopedStorage from 'react-native-scoped-storage';
 // @ts-ignore - Importing react-native-file-access
+
 const FileAccess = require('react-native-file-access');
 
 // Conditionally import PermissionsAndroid only for non-web platforms
@@ -15,6 +16,7 @@ const PermissionsAndroidModule = Platform.OS !== 'web' ? require('react-native')
 const ROOT_FOLDER_ID = 'my_photo_app_root_folder_v1';
 
 console.log(ROOT_FOLDER_ID);
+
 
 interface DirectoryInfo {
   uri: string;
@@ -122,40 +124,54 @@ export const useFileSystem = () => {
     loadSavedRootFolder();
   }, []);
 
-  const saveToGallery = async (photo: { uri: string } | null, folderName: string) => {
-    if (!photo) {
-      Alert.alert('Error', 'No photo to save');
-      return;
+ const saveToGallery = async (photoUri: string, labelName: string) => {
+  try {
+    // Ask for permission
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status !== 'granted') {
+      throw new Error('Permission to access media library is required!');
     }
-    
-    // Create folder name (default if empty)
-    const albumName = folderName.trim() || 'PhotoApp';
-    
-    // Create a better filename with device and date
+
+    // Get current date
     const now = new Date();
-    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const dateStr = now.toISOString().split('T')[0]; // e.g. 2025-05-13
+
+    // Get device model name (fallback if unavailable)
     const deviceName = Device.modelName
       ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
       : 'unknown_device';
+
+    // Create filename
     const fileName = `${deviceName}_${dateStr}.jpg`;
-    const tempUri = `${FileSystem.cacheDirectory}${fileName}`;
-  
+
+    // Copy the file to a temporary directory with the new name
+    const newPath = `${FileSystem.cacheDirectory}${fileName}`;
     await FileSystem.copyAsync({
-      from: photo?.uri || '',
-      to: tempUri,
+      from: photoUri,
+      to: newPath,
     });
-  
-    const asset = await MediaLibrary.createAssetAsync(tempUri);
-    const album = await MediaLibrary.getAlbumAsync(albumName);
-  
-    if (album === null) {
-      await MediaLibrary.createAlbumAsync(albumName, asset, false);
+
+    // Create media asset
+    const asset = await MediaLibrary.createAssetAsync(newPath);
+
+    // Create or get album
+    const albumName = labelName.trim() || 'PhotoApp';
+    let album = await MediaLibrary.getAlbumAsync(albumName);
+    if (!album) {
+      album = await MediaLibrary.createAlbumAsync(albumName, asset, false);
     } else {
       await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
     }
-  
-    Alert.alert('Success', `Photo saved to "${albumName}" album in your gallery`, [{ text: 'OK' }]);
-  };
+    
+
+    // console.log(`✅ Saved to ${albumName} as ${fileName}`);
+    Alert.alert('Success', `Photo saved to ${albumName} as ${fileName}`, [{ text: 'OK' }]);
+    return { success: true, fileName };
+  } catch (error) {
+    console.error('❌ Error saving to gallery:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+};
 
   const saveToExternalFolder = async (photo: { uri: string } | null, directory: string = 'downloads') => {
     if (!photo) {
@@ -289,28 +305,16 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
       ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
       : 'unknown_device';
     const exactFileName = `${deviceName}_${dateStr}.jpg`;
-    const tempUri = `${FileSystem.cacheDirectory}${exactFileName}`;
-
-    console.log(`Copying file from ${photo.uri} to ${tempUri}`);
-    await FileSystem.copyAsync({
-      from: photo.uri,
-      to: tempUri,
-    });
-
     const folderName = label.trim() || 'Untitled';
-    console.log(`Creating folder: ${folderName}`);
 
     if (rootFolder.startsWith('content://')) {
-      // Scoped Storage approach for Android
-      const fileData = await FileSystem.readAsStringAsync(tempUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Scoped Storage binary blob approach for Android
+      const fileBlob = await fetch(photo.uri).then(res => res.blob());
 
       const subfolder = await ScopedStorage.createDirectory(rootFolder, folderName);
       if (!subfolder || !subfolder.uri) {
         throw new Error('Failed to create subfolder');
       }
-      console.log(`Subfolder created at: ${subfolder.uri}`);
 
       const imageFile = await ScopedStorage.createFile(
         subfolder.uri,
@@ -322,20 +326,17 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
         await ScopedStorage.writeFile(
           imageFile.uri,
           'image/jpeg',
-          fileData,
-          'base64'
+          await fileBlob.text(), // Convert Blob to Base64 string
+          'blob'
         );
         Alert.alert('Success', `Photo saved to ${folderName}/${exactFileName}`, [{ text: 'OK' }]);
       }
     } else {
-      // File URI approach for other platforms
+      // Non-scoped storage case
       const subfolderPath = `${rootFolder}/${folderName}`;
-      console.log(`Creating subfolder at: ${subfolderPath}`);
       await FileAccess.mkdir(subfolderPath);
-
       const finalPath = `${subfolderPath}/${exactFileName}`;
-      console.log(`Saving file to: ${finalPath}`);
-      await FileAccess.copyFile(tempUri, finalPath);
+      await FileAccess.copyFile(photo.uri, finalPath);
       Alert.alert('Success', `Photo saved to ${folderName}/${exactFileName}`, [{ text: 'OK' }]);
     }
   } catch (error) {
@@ -343,6 +344,8 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
     Alert.alert('Error', 'Failed to save photo');
   }
 };
+
+
 
   const selectRootFolder = async () => {
     try {
@@ -514,7 +517,7 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
       const saveOptions = [
         {
           text: 'Device Gallery',
-          onPress: async () => await saveToGallery(photo, folderName),
+          onPress: async () => await saveToGallery(photo.uri, folderName),
         },
         {
           text: 'Pictures Folder',
@@ -557,7 +560,7 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string) =>
               console.error('Error saving to Pictures folder:', error);
               Alert.alert('Error', 'Failed to save to Pictures folder. Trying gallery instead...');
               // Fall back to gallery
-              await saveToGallery(photo, folderName);
+              await saveToGallery(photo.uri, folderName);
             }
           }
         },
