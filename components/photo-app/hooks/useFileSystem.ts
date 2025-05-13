@@ -8,6 +8,12 @@ import { Alert, Platform, Share } from 'react-native';
 import * as ScopedStorage from 'react-native-scoped-storage';
 // @ts-ignore - Importing react-native-file-access
 
+import  {ImagePicker} from 'expo-image-picker';
+import Sharing from 'expo-sharing';
+import {StorageAccessFramework} from 'expo-file-system';
+
+
+
 const FileAccess = require('react-native-file-access');
 
 // Conditionally import PermissionsAndroid only for non-web platforms
@@ -126,52 +132,111 @@ export const useFileSystem = () => {
 
  const saveToGallery = async (photoUri: string, labelName: string) => {
   try {
-    // Ask for permission
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') {
-      throw new Error('Permission to access media library is required!');
+      
+      const uri = photoUri;
+      // Request access to external directory
+      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+      if (!permissions.granted) {
+        Alert.alert("Permission denied", "Cannot save file without permissions");
+        return;
+      }
+      // Create folders: classifier/sjersey (if not exists)
+      const classifierFolderUri = await StorageAccessFramework.makeDirectoryAsync(
+        permissions.directoryUri,
+        'classifier'
+      );
+
+      const sjerseyFolderUri = await StorageAccessFramework.makeDirectoryAsync(
+        classifierFolderUri,
+        labelName
+      );
+
+      // Define file name
+      const filename = `image.jpg`;
+
+      // Read file into base64
+      const base64Image = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Save file using SAF
+      const savedFileUri = await StorageAccessFramework.createFileAsync(
+        sjerseyFolderUri,
+        filename,
+        'image/jpeg'
+      );
+
+      await FileSystem.writeAsStringAsync(savedFileUri, base64Image, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      Alert.alert("Success", "Image saved successfully!");
+
+      // Optional: Share immediately
+      // await Sharing.shareAsync(savedFileUri);
+
+    } catch (error) {
+      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      Alert.alert("Error", "Could not save image: " + errorMessage);
     }
-
-    // Get current date
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0]; // e.g. 2025-05-13
-
-    // Get device model name (fallback if unavailable)
-    const deviceName = Device.modelName
-      ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
-      : 'unknown_device';
-
-    // Create filename
-    const fileName = `${deviceName}_${dateStr}.jpg`;
-
-    // Copy the file to a temporary directory with the new name
-    const newPath = `${FileSystem.cacheDirectory}${fileName}`;
-    await FileSystem.copyAsync({
-      from: photoUri,
-      to: newPath,
-    });
-
-    // Create media asset
-    const asset = await MediaLibrary.createAssetAsync(newPath);
-
-    // Create or get album
-    const albumName = labelName.trim() || 'PhotoApp';
-    let album = await MediaLibrary.getAlbumAsync(albumName);
-    if (!album) {
-      album = await MediaLibrary.createAlbumAsync(albumName, asset, false);
-    } else {
-      await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-    }
-    
-
-    // console.log(`✅ Saved to ${albumName} as ${fileName}`);
-    Alert.alert('Success', `Photo saved to ${albumName} as ${fileName}`, [{ text: 'OK' }]);
-    return { success: true, fileName };
-  } catch (error) {
-    console.error('❌ Error saving to gallery:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-  }
 };
+
+
+
+ const saveImageToPublicFolder = async (photoUrl:string , labelName : string) => {
+    try {
+      
+      const uri = photoUrl;
+      // Request access to external directory
+      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+      if (!permissions.granted) {
+        Alert.alert("Permission denied", "Cannot save file without permissions");
+        return;
+      }
+      // Create folders: classifier/sjersey (if not exists)
+      const classifierFolderUri = await StorageAccessFramework.makeDirectoryAsync(
+        permissions.directoryUri,
+        'classifier'
+      );
+
+      const sjerseyFolderUri = await StorageAccessFramework.makeDirectoryAsync(
+        classifierFolderUri,
+        'sjersey'
+      );
+
+      // Define file name
+      const filename = `image.jpg`;
+
+      // Read file into base64
+      const base64Image = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Save file using SAF
+      const savedFileUri = await StorageAccessFramework.createFileAsync(
+        sjerseyFolderUri,
+        filename,
+        'image/jpeg'
+      );
+
+      await FileSystem.writeAsStringAsync(savedFileUri, base64Image, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      Alert.alert("Success", "Image saved successfully!");
+
+      // Optional: Share immediately
+      // await Sharing.shareAsync(savedFileUri);
+
+    } catch (error) {
+      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      Alert.alert("Error", "Could not save image: " + errorMessage);
+    }
+  }
 
   const saveToExternalFolder = async (photo: { uri: string } | null, directory: string = 'downloads') => {
     if (!photo) {
