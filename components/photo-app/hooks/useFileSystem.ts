@@ -130,58 +130,68 @@ export const useFileSystem = () => {
     loadSavedRootFolder();
   }, []);
 
- const saveToGallery = async (photoUri: string, labelName: string) => {
+const saveToGallery = async (photoUri: string, labelName: string) => {
   try {
-      
-      const uri = photoUri;
-      // Request access to external directory
-      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+    const uri = photoUri;
 
-      if (!permissions.granted) {
-        Alert.alert("Permission denied", "Cannot save file without permissions");
-        return;
-      }
-      // Create folders: classifier/sjersey (if not exists)
-      const classifierFolderUri = await StorageAccessFramework.makeDirectoryAsync(
-        permissions.directoryUri,
-        'classifier'
-      );
-
-      const sjerseyFolderUri = await StorageAccessFramework.makeDirectoryAsync(
-        classifierFolderUri,
-        labelName
-      );
-
-      // Define file name
-      const filename = `image.jpg`;
-
-      // Read file into base64
-      const base64Image = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      // Save file using SAF
-      const savedFileUri = await StorageAccessFramework.createFileAsync(
-        sjerseyFolderUri,
-        filename,
-        'image/jpeg'
-      );
-
-      await FileSystem.writeAsStringAsync(savedFileUri, base64Image, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      Alert.alert("Success", "Image saved successfully!");
-
-      // Optional: Share immediately
-      // await Sharing.shareAsync(savedFileUri);
-
-    } catch (error) {
-      console.error(error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      Alert.alert("Error", "Could not save image: " + errorMessage);
+    // Request access to external directory
+    const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+    if (!permissions.granted) {
+      Alert.alert("Permission denied", "Cannot save file without permissions");
+      return;
     }
+
+    const rootUri = permissions.directoryUri;
+
+    // Step 1: Check if 'classifier' folder exists
+const rootContents = await StorageAccessFramework.readDirectoryAsync(rootUri);
+
+// Decode each item in the array
+const decodedItems = rootContents.map(item => decodeURIComponent(item));
+
+// Find the one that ends with '/classifier'
+let classifierFolderUri = decodedItems.find(item => item.endsWith('/classifier'));
+
+console.log('Classifier Folder URI:', classifierFolderUri);
+
+    // If not, create it
+    if (!classifierFolderUri) {
+      classifierFolderUri = await StorageAccessFramework.makeDirectoryAsync(rootUri, 'classifier');
+    }
+
+    // Step 2: Check if labelName folder exists inside 'classifier'
+    const classifierContents = await StorageAccessFramework.readDirectoryAsync(classifierFolderUri);
+    let labelFolderUri = classifierContents.find((item) => item.endsWith(`/${labelName}`));
+
+    if (!labelFolderUri) {
+      labelFolderUri = await StorageAccessFramework.makeDirectoryAsync(classifierFolderUri, labelName);
+    }
+
+    // Step 3: Save image
+    const filename = `image.jpg`;
+
+    const base64Image = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const savedFileUri = await StorageAccessFramework.createFileAsync(
+      labelFolderUri,
+      filename,
+      'image/jpeg'
+    );
+
+    await FileSystem.writeAsStringAsync(savedFileUri, base64Image, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    Alert.alert("✅ Success", "Image saved successfully!");
+  } catch (error) {
+    console.error(error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    Alert.alert("❌ Error", "Could not save image: " + errorMessage);
+  }
 };
+
 
 
 
