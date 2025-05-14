@@ -603,64 +603,64 @@ const saveToRootFolder = async (photo: { uri: string } | null, label: string, ro
           text: 'Device Gallery',
           onPress: async () => await saveToGallery(photo.uri, folderName),
         },
-        {
-          text: 'Pictures Folder',
-          onPress: async () => {
-            try {
-              // Create folder name from label (or default if empty)
-              const albumName = folderName.trim() || 'PhotoApp';
+        // {
+        //   text: 'Pictures Folder',
+        //   onPress: async () => {
+        //     try {
+        //       // Create folder name from label (or default if empty)
+        //       const albumName = folderName.trim() || 'PhotoApp';
               
-              // Create a better filename with device and date
-              const now = new Date();
-              const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
-              const deviceName = Device.modelName
-                ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
-                : 'unknown_device';
-              const fileName = `${deviceName}_${dateStr}.jpg`;
+        //       // Create a better filename with device and date
+        //       const now = new Date();
+        //       const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+        //       const deviceName = Device.modelName
+        //         ? Device.modelName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+        //         : 'unknown_device';
+        //       const fileName = `${deviceName}_${dateStr}.jpg`;
               
-              // Create the folder if it doesn't exist
-              const picturesPath = FileAccess.Dirs.PictureDir;
-              const albumFolder = `${picturesPath}/${albumName}`;
-              try {
-                await FileAccess.mkdir(albumFolder);
-              } catch (mkdirError) {
-                // Folder might already exist
-                console.log('Folder creation error (might exist):', mkdirError);
-              }
+        //       // Create the folder if it doesn't exist
+        //       const picturesPath = FileAccess.Dirs.PictureDir;
+        //       const albumFolder = `${picturesPath}/${albumName}`;
+        //       try {
+        //         await FileAccess.mkdir(albumFolder);
+        //       } catch (mkdirError) {
+        //         // Folder might already exist
+        //         console.log('Folder creation error (might exist):', mkdirError);
+        //       }
               
-              // Copy the photo to the album folder
-              const destPath = `${albumFolder}/${fileName}`;
-              await FileAccess.copyFile(photo.uri, destPath);
+        //       // Copy the photo to the album folder
+        //       const destPath = `${albumFolder}/${fileName}`;
+        //       await FileAccess.copyFile(photo.uri, destPath);
               
-              // Register with media library to show in gallery
-              try {
-                await MediaLibrary.createAssetAsync(destPath);
-              } catch (mediaError) {
-                console.log('Error adding to media library:', mediaError);
-              }
+        //       // Register with media library to show in gallery
+        //       try {
+        //         await MediaLibrary.createAssetAsync(destPath);
+        //       } catch (mediaError) {
+        //         console.log('Error adding to media library:', mediaError);
+        //       }
               
-              Alert.alert('Success', `Photo saved to Pictures/${albumName}/${fileName}`, [{ text: 'OK' }]);
-            } catch (error) {
-              console.error('Error saving to Pictures folder:', error);
-              Alert.alert('Error', 'Failed to save to Pictures folder. Trying gallery instead...');
-              // Fall back to gallery
-              await saveToGallery(photo.uri, folderName);
-            }
-          }
-        },
-        {
-          text: 'Custom Location',
-          onPress: async () => await saveToCustomLocation(photo, label),
-        }
+        //       Alert.alert('Success', `Photo saved to Pictures/${albumName}/${fileName}`, [{ text: 'OK' }]);
+        //     } catch (error) {
+        //       console.error('Error saving to Pictures folder:', error);
+        //       Alert.alert('Error', 'Failed to save to Pictures folder. Trying gallery instead...');
+        //       // Fall back to gallery
+        //       await saveToGallery(photo.uri, folderName);
+        //     }
+        //   }
+        // },
+        // {
+        //   text: 'Custom Location',
+        //   onPress: async () => await saveToCustomLocation(photo, label),
+        // }
       ];
       
       // Add root folder option if it's set
-      if (rootFolder) {
-        saveOptions.unshift({
-          text: 'Root Folder',
-          onPress: async () => await saveToRootFolder(photo, label, rootFolder!),
-        });
-      }
+      // if (rootFolder) {
+      //   saveOptions.unshift({
+      //     text: 'Root Folder',
+      //     onPress: async () => await saveToRootFolder(photo, label, rootFolder!),
+      //   });
+      // }
       
       saveOptions.push({
         text: 'Cancel',
