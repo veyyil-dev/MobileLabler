@@ -130,6 +130,9 @@ export const useFileSystem = () => {
     loadSavedRootFolder();
   }, []);
 
+
+
+
 const saveToGallery = async (photoUri: string, labelName: string) => {
   try {
     const uri = photoUri;
@@ -144,25 +147,35 @@ const saveToGallery = async (photoUri: string, labelName: string) => {
     const rootUri = permissions.directoryUri;
 
     // Step 1: Check if 'classifier' folder exists
-const rootContents = await StorageAccessFramework.readDirectoryAsync(rootUri);
+    const rootContents = await StorageAccessFramework.readDirectoryAsync(rootUri);
+    let classifierFolderUri = null;
 
-// Decode each item in the array
-const decodedItems = rootContents.map(item => decodeURIComponent(item));
+    for (const item of rootContents) {
+      const decoded = decodeURIComponent(item);
+      if (decoded.split('/').pop() === 'classifier') {
+        classifierFolderUri = item;
+        break;
+      }
+    }
 
-// Find the one that ends with '/classifier'
-let classifierFolderUri = decodedItems.find(item => item.endsWith('/classifier'));
-
-console.log('Classifier Folder URI:', classifierFolderUri);
-
-    // If not, create it
+    // Create if not exists
     if (!classifierFolderUri) {
       classifierFolderUri = await StorageAccessFramework.makeDirectoryAsync(rootUri, 'classifier');
     }
 
     // Step 2: Check if labelName folder exists inside 'classifier'
     const classifierContents = await StorageAccessFramework.readDirectoryAsync(classifierFolderUri);
-    let labelFolderUri = classifierContents.find((item) => item.endsWith(`/${labelName}`));
+    let labelFolderUri = null;
 
+    for (const item of classifierContents) {
+      const decoded = decodeURIComponent(item);
+      if (decoded.split('/').pop() === labelName) {
+        labelFolderUri = item;
+        break;
+      }
+    }
+
+    // Create label folder if not exists
     if (!labelFolderUri) {
       labelFolderUri = await StorageAccessFramework.makeDirectoryAsync(classifierFolderUri, labelName);
     }
@@ -191,6 +204,7 @@ console.log('Classifier Folder URI:', classifierFolderUri);
     Alert.alert("❌ Error", "Could not save image: " + errorMessage);
   }
 };
+
 
 
 
