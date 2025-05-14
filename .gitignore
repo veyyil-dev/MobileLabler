@@ -30,6 +30,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# Native folders - ignore if not modifying native code
+/android/
+/ios/
+
 # local env files
 .env*.local
 
